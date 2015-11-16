@@ -5,6 +5,7 @@ import org.apache.spark.broadcast.Broadcast;
 import org.deeplearning4j.berkeley.Pair;
 import org.deeplearning4j.models.word2vec.VocabWord;
 import org.deeplearning4j.models.word2vec.wordstore.VocabCache;
+import org.nd4j.linalg.api.buffer.FloatBuffer;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.jblas.NDArray;
@@ -37,6 +38,7 @@ public class FirstIterationFunction
     private Broadcast<Map<Pair<Integer,Integer>, INDArray>> syn0;
     private VocabCache vocabCache;
     private int K;
+    private INDArray table;
 
     private Map<Pair<Integer,Integer>, INDArray> indexSyn0VecMap;
     private AtomicLong nextRandom = new AtomicLong(5);
@@ -60,10 +62,12 @@ public class FirstIterationFunction
         this.K = Integer.parseInt(word2vecVarMap.get("K").toString());
         this.syn0 = syn0;
         this.vocabCache = vocabCache;
+
     }
 
     public Iterable<Entry<Pair<Integer,Integer>, INDArray>> call(Iterator<List<VocabWord>> iter) {
         indexSyn0VecMap = syn0.value();
+        makeTable(10000,0.75);
         Long last = 0L;
         Long now = 0L;
 
@@ -124,8 +128,9 @@ public class FirstIterationFunction
         // error for current word and context
         INDArray neu1e = Nd4j.create(vectorLength);
 
-        Pair<Integer,Integer> w2Index = null;
-        double maxScore = -1;
+
+        Pair<Integer,Integer> w2Index = new Pair(w2.getIndex(),0);
+        /*double maxScore = -1;
         for (int k = 0; k < K; k++) {
             Pair<Integer,Integer> w2IndexK = new Pair(w2.getIndex(),k);
             INDArray syn0Vec = indexSyn0VecMap.get(w2IndexK);
@@ -146,41 +151,82 @@ public class FirstIterationFunction
                 maxScore = score;
                 w2Index = w2IndexK;
             }
-        }
+        }*/
 
         INDArray syn0Vec = indexSyn0VecMap.get(w2Index);
-        //
-        for (int i = 0; i < w1.getCodeLength(); i++) {
-            int code = w1.getCodes().get(i);
-            int point = w1.getPoints().get(i)+vecNum;
+        int target = w1.getIndex();
+        int label;
+        for (int i = 0; i < negative+1; i++) {
+            if (i == 0)
+                label = 1;
+            else {
+                nextRandom.set(nextRandom.get() * 25214903917L + 11);
+                int idx = Math.abs((int) (nextRandom.get() >> 16) % table.length());
 
-            // Point to
-            Pair<Integer,Integer> pointIndex = new Pair(point,0);
-            INDArray syn1Vec = indexSyn0VecMap.get(pointIndex);
+                target = table.getInt(idx);
+                if (target <= 0)
+                    target = (int) nextRandom.get() % (vocabCache.numWords() - 1) + 1;
 
-            // Dot product of Syn0 and Syn1 vecs
-            double dot = Nd4j.getBlasWrapper().level1().dot(vectorLength, 1.0, syn0Vec, syn1Vec);
+                if (target == w1.getIndex())
+                    continue;
+                label = 0;
+            }
 
-            if (dot < -maxExp || dot >= maxExp)
+            if(target >= vocabCache.numWords() || target < 0)
                 continue;
 
-            int idx = (int) ((dot + maxExp) * ((double) expTable.length / maxExp / 2.0));
+            INDArray syn1Vec = indexSyn0VecMap.get(new Pair(target+vocabCache.numWords(),0));
 
-            //score
-            double f = expTable[idx];
-            //gradient
-            double g = (1 - code - f) * (useAdaGrad ? w1.getGradient(i, currentSentenceAlpha) : currentSentenceAlpha);
+            //System.out.println(target);
+            //System.out.println(syn0Vec.toString());
+            //System.out.println(syn1Vec.toString());
+            double f = Nd4j.getBlasWrapper().level1().dot(vectorLength, 1.0, syn0Vec,syn1Vec);
+            double g;
+            if (f > maxExp)
+                g = (label - 1) *  alpha;
+            else if (f < -maxExp)
+                g = (label - 0) *  alpha;
+            else
+                g = (label - expTable[(int)((f + maxExp) * (expTable.length / maxExp / 2))]) *   alpha;
 
             Nd4j.getBlasWrapper().level1().axpy(vectorLength, g, syn1Vec, neu1e);
+
             Nd4j.getBlasWrapper().level1().axpy(vectorLength, g, syn0Vec, syn1Vec);
 
-            indexSyn0VecMap.put(pointIndex, syn1Vec);
+            indexSyn0VecMap.put(new Pair(target+vocabCache.numWords(),0), syn1Vec);
         }
 
         // Updated the Syn0 vector based on gradient. Syn0 is not random anymore.
         Nd4j.getBlasWrapper().level1().axpy(vectorLength, 1.0f, neu1e, syn0Vec);
 
         indexSyn0VecMap.put(w2Index, syn0Vec);
+
+    }
+
+    private void makeTable(int tableSize,double power) {
+        int vocabSize = vocabCache.numWords();
+        table = Nd4j.create(new FloatBuffer(tableSize));
+        double trainWordsPow = 0.0;
+        for(String word : vocabCache.words()) {
+            trainWordsPow += Math.pow(vocabCache.wordFrequency(word), power);
+        }
+
+
+        int i = 0;
+        double d1 = Math.pow(vocabCache.wordFrequency(vocabCache.wordAtIndex(i)),power) / trainWordsPow;
+
+        for(int a = 0; a < tableSize; a++) {
+            table.putScalar(a,i);
+            double mul = a * 1.0 / (double) tableSize;
+            if(mul > d1) {
+                i++;
+                d1 += Math.pow(vocabCache.wordFrequency(vocabCache.wordAtIndex(i)),power) / trainWordsPow;
+
+            }
+            if (i >= vocabSize)
+                i = vocabSize-1;
+
+        }
 
     }
 }

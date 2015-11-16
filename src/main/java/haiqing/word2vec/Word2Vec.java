@@ -124,7 +124,7 @@ public class Word2Vec implements Serializable  {
         Map<String, Object> tokenizerVarMap = getTokenizerVarMap();
         Map<String, Object> word2vecVarMap = getWord2vecVarMap();
 
-        // Variables to fill in in train
+        // Variables to fill in train
         //final JavaRDD<AtomicLong> sentenceWordsCountRDD;
         final JavaRDD<List<VocabWord>> vocabWordListRDD;
         //final JavaPairRDD<List<VocabWord>, Long> vocabWordListSentenceCumSumRDD;
@@ -146,36 +146,10 @@ public class Word2Vec implements Serializable  {
         // 2 RDDs: (vocab words list) and (sentence Count).Already cached
         //sentenceWordsCountRDD = pipeline.getSentenceCountRDD();
         vocabWordListRDD = pipeline.getVocabWordListRDD();
-        System.out.println("-------");
-        Iterator a = vocabWordListRDD.collect().iterator();
-        for (int i = 0; i < 10; i++)
-            System.out.println(a.next().toString());
 
         // Get vocabCache and broad-casted vocabCache
         Broadcast<VocabCache> vocabCacheBroadcast = pipeline.getBroadCastVocabCache();
         vocabCache = vocabCacheBroadcast.getValue();
-
-        //////////////////////////////////////
-        log.info("Building Huffman Tree ...");
-        // Building Huffman Tree would update the code and point in each of the vocabWord in vocabCache
-
-
-        System.out.println("-------");
-        a = vocabCache.vocabWords().iterator();
-        for (int i = 0; i < 10; i++)
-            System.out.println(a.next().toString());
-        Huffman huffman = new Huffman(vocabCache.vocabWords());
-        huffman.build();
-        System.out.println("-------");
-        a = vocabCache.vocabWords().iterator();
-        for (int i = 0; i < 10; i++)
-            System.out.println(a.next().toString());
-
-
-        System.out.println("-------");
-        a = vocabWordListRDD.collect().iterator();
-        for (int i = 0; i < 10; i++)
-            System.out.println(a.next().toString());
 
         /////////////////////////////////////
         log.info("Training word2vec sentences ...");
@@ -189,11 +163,9 @@ public class Word2Vec implements Serializable  {
                 s0.put(new Pair(i, k), getRandomSyn0Vec(vectorLength));
             }
         }
-        for (int i = vocabCache.numWords(); i < vocabCache.numWords()*2-1; i++) {
+        for (int i = vocabCache.numWords(); i < vocabCache.numWords()*2; i++) {
             s0.put(new Pair(i,0), Nd4j.zeros(1, vectorLength));
         }
-
-        System.out.println(s0.get(new Pair<Integer, Integer>(0,0)).toString());
 
         for (int i = 0; i < iterations; i++) {
             System.out.println("iteration: "+i);
@@ -222,8 +194,6 @@ public class Word2Vec implements Serializable  {
                 if (cc > 0) {
                     INDArray tmp = Nd4j.zeros(1, vectorLength).addi(syn0UpdateEntry._2()).divi(cc);
                     s0.put(syn0UpdateEntry._1(), tmp);
-                    if (syn0UpdateEntry._1().getFirst() == 0 && syn0UpdateEntry._1().getSecond() == 0)
-                        System.out.println(tmp.toString());
                 }
             }
             //System.out.println(s0.get(new Pair<Integer, Integer>(0,0)).toString());

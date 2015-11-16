@@ -40,6 +40,7 @@ public class testW2V {
                 .setAlpha(0.025).setMinAlpha(0)
                 .setIterations(1)
                 .setNumPartitions(1)
+                .setNegative(5)
                 .setNumWords(5);
 
         word2Vec.train(corpus);
